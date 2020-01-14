@@ -3940,6 +3940,8 @@ sub blob_mimetype {
 		return 'image/gif';
 	} elsif ($filename =~ m/\.jpe?g$/i) {
 		return 'image/jpeg';
+	} elsif ($filename =~ m/\.md$/i) {
+		return 'text/markdown';
 	} else {
 		return 'application/octet-stream';
 	}
@@ -3988,6 +3990,15 @@ sub run_highlighter {
 	          quote_command($highlight_bin).
 	          " --replace-tabs=8 --fragment $syntax_arg |"
 		or die_error(500, "Couldn't open file or run syntax highlighter");
+	return $fd;
+}
+
+sub run_multimarkdown {
+	my $hash = shift;
+
+	open my $fd, quote_command(git_cmd(), "cat-file", "blob", $hash)." | ".
+	             quote_command("multimarkdown")." |"
+		or die_error(500, "Couldn't open file or run multimarkdown");
 	return $fd;
 }
 
@@ -6597,6 +6608,23 @@ sub git_summary {
 	git_header_html();
 	git_print_page_nav('summary','', $head);
 
+	# Print out README.md if it exists
+	my $proj_head_hash = git_get_head_hash($project);
+	my $readme_blob_hash = git_get_hash_by_path($proj_head_hash, "README.md", "blob");
+
+	if ($readme_blob_hash) {
+		print "<div class=\"header\">Readme</div>\n";
+		print "<div class=\"header markdown\">\n";
+
+		my $fd = run_multimarkdown($readme_blob_hash);
+		while(<$fd>) {
+			print $_;
+		}
+		close $fd;
+
+		print "</div>\n";
+	}
+
 	print "<div class=\"title\">&nbsp;</div>\n";
 	print "<table class=\"projects_list\">\n" .
 	      "<tr id=\"metadata_desc\"><td>description</td><td>" . esc_html($descr) . "</td></tr>\n";
@@ -7115,7 +7143,11 @@ sub git_blob {
 
 	my $highlight = gitweb_check_feature('highlight');
 	my $syntax = guess_file_syntax($highlight, $file_name);
-	$fd = run_highlighter($fd, $highlight, $syntax);
+	if ($mimetype =~ m!^text/markdown$!) {
+		$fd = run_multimarkdown($hash);
+	} else {
+		$fd = run_highlighter($fd, $highlight, $syntax);
+	}
 
 	git_header_html(undef, $expires);
 	my $formats_nav = '';
@@ -7160,6 +7192,12 @@ sub git_blob {
 		      esc_attr(href(action=>"blob_plain", hash=>$hash,
 		           hash_base=>$hash_base, file_name=>$file_name)) .
 		      qq!" />\n!;
+	} elsif ($mimetype =~ m!^text/markdown$!) {
+		print "<div class=\"markdown\">\n";
+		while(<$fd>) {
+			print $_;
+		}
+		print "</div>\n";
 	} else {
 		my $nr;
 		while (my $line = <$fd>) {
